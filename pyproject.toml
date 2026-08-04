@@ -1,0 +1,19 @@
+[project]
+name = "familienfinanzen"
+version = "0.1.0"
+description = "A desktop application skeleton for FamilienFinanzen."
+readme = "README.md"
+authors = [
+  { name = "FamilienFinanzen Team" }
+]
+requires-python = ">=3.13,<4.0"
+dependencies = [
+  "PySide6"
+]
+
+[project.scripts]
+familienfinanzen = "main:main"
+
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
