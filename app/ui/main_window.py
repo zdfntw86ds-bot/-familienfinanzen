@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
     QTableWidget,
     QTableWidgetItem,
     QAbstractItemView,
+    QHeaderView,
     QVBoxLayout,
     QWidget,
 )
@@ -40,6 +41,12 @@ class MainWindow(QMainWindow):
         self.table.setHorizontalHeaderLabels(["Date", "Merchant", "Amount (CHF)"])
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.table.setAlternatingRowColors(True)
+        self.table.setSortingEnabled(True)
+        header = self.table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.Stretch)
+        header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
         layout.addWidget(self.table)
 
         self.setCentralWidget(central_widget)
@@ -72,14 +79,26 @@ class MainWindow(QMainWindow):
             if stem.startswith("viseca"):
                 txs = parse_viseca_pdf(file_path)
                 # populate table
+                # disable sorting while populating to avoid row reordering
+                sorting_was_enabled = self.table.isSortingEnabled()
+                self.table.setSortingEnabled(False)
                 self.table.setRowCount(len(txs))
                 for row, tx in enumerate(txs):
                     date_item = QTableWidgetItem(tx.date.strftime("%d.%m.%Y"))
                     merchant_item = QTableWidgetItem(tx.merchant_original)
                     amount_item = QTableWidgetItem(f"{tx.amount:.2f}")
+                    # Right-align amount
+                    amount_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
                     self.table.setItem(row, 0, date_item)
                     self.table.setItem(row, 1, merchant_item)
                     self.table.setItem(row, 2, amount_item)
+                # Resize date and amount columns to contents; merchant column stretches
+                header = self.table.horizontalHeader()
+                header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
+                header.setSectionResizeMode(1, QHeaderView.Stretch)
+                header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
+                # restore sorting state
+                self.table.setSortingEnabled(sorting_was_enabled)
                 print(f"Parsed {len(txs)} transactions")
             else:
                 QMessageBox.information(self, "Unknown importer", "Unknown importer. Please rename the file or add support for this bank.")
