@@ -6,7 +6,9 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QPushButton,
-    QTextEdit,
+    QTableWidget,
+    QTableWidgetItem,
+    QAbstractItemView,
     QVBoxLayout,
     QWidget,
 )
@@ -34,10 +36,11 @@ class MainWindow(QMainWindow):
         self.import_button.clicked.connect(self._import_pdf)
         layout.addWidget(self.import_button, alignment=Qt.AlignmentFlag.AlignCenter)
 
-        self.text_editor = QTextEdit(central_widget)
-        self.text_editor.setReadOnly(True)
-        self.text_editor.setPlaceholderText("Extrahierter PDF-Text erscheint hier.")
-        layout.addWidget(self.text_editor)
+        self.table = QTableWidget(0, 3, central_widget)
+        self.table.setHorizontalHeaderLabels(["Date", "Merchant", "Amount (CHF)"])
+        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        layout.addWidget(self.table)
 
         self.setCentralWidget(central_widget)
 
@@ -51,39 +54,34 @@ class MainWindow(QMainWindow):
         if not file_path:
             return
 
-        print(f"DEBUG: PDF selected: {file_path}")
-
+        # PDF selected
         try:
             extracted_text = extract_text_from_pdf(file_path)
-            print(f"DEBUG: Text extracted ({len(extracted_text or '')} chars)")
         except Exception as exc:  # pragma: no cover - UI feedback path
             QMessageBox.critical(self, "Fehler", f"Die PDF-Datei konnte nicht gelesen werden.\n\n{exc}")
             return
 
         if not extracted_text.strip():
-            print("DEBUG: Extracted text is empty after stripping")
             QMessageBox.information(self, "Keine Textdaten", "Es konnten keine Textinhalte aus der PDF-Datei gelesen werden.")
-            self.text_editor.clear()
+            self.table.setRowCount(0)
             return
 
-        self.text_editor.setPlainText(extracted_text)
-        print("DEBUG: Displayed extracted text in QTextEdit")
         # Determine importer by filename stem (only support viseca prefix for now)
         try:
-            # Print first 1000 chars for debugging
-            preview = extracted_text[:1000]
-            print("DEBUG: First 1000 chars of extracted text:\n" + preview)
-
             stem = Path(file_path).stem.lower()
-            print(f"DEBUG: PDF filename stem='{stem}'")
             if stem.startswith("viseca"):
-                print("DEBUG: Using Viseca importer based on filename")
-                print("DEBUG: Calling parse_viseca_pdf()")
                 txs = parse_viseca_pdf(file_path)
-                print(f"DEBUG: Parser returned {len(txs)} transactions")
+                # populate table
+                self.table.setRowCount(len(txs))
+                for row, tx in enumerate(txs):
+                    date_item = QTableWidgetItem(tx.date.strftime("%d.%m.%Y"))
+                    merchant_item = QTableWidgetItem(tx.merchant_original)
+                    amount_item = QTableWidgetItem(f"{tx.amount:.2f}")
+                    self.table.setItem(row, 0, date_item)
+                    self.table.setItem(row, 1, merchant_item)
+                    self.table.setItem(row, 2, amount_item)
                 print(f"Parsed {len(txs)} transactions")
             else:
                 QMessageBox.information(self, "Unknown importer", "Unknown importer. Please rename the file or add support for this bank.")
         except Exception as exc:  # pragma: no cover - UI feedback path
-            print(f"DEBUG: Parser raised exception: {exc}")
             QMessageBox.warning(self, "Parser-Fehler", f"Beim Parsen der Datei trat ein Fehler auf:\n\n{exc}")

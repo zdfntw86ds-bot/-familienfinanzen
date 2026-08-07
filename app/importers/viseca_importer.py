@@ -87,8 +87,6 @@ def parse_viseca_text(text: str) -> List[Transaction]:
 
         tx = Transaction(date=dt, merchant_original=merchant.strip(), amount=amt)
         transactions.append(tx)
-        # For now print each parsed transaction
-        print(tx)
 
     return transactions
 
@@ -117,15 +115,11 @@ def parse_viseca_pdf(path: str | Path) -> List[Transaction]:
 
     Prints every parsed Transaction to the terminal and returns the list.
     """
-    print(f"DEBUG: parse_viseca_pdf called with path={path}")
     text = extract_text_from_pdf(path)
-    print(f"DEBUG: parse_viseca_pdf: extracted text length={len(text or '')}")
     if not text:
-        print(f"No text extracted from {path}")
-        # still return empty list
+        # no text extracted
         return []
 
     # Always parse the extracted text (filename-based importer selection handles detection)
     txs = parse_viseca_text(text)
-    # parse_viseca_text already prints each transaction; return for further use
     return txs
