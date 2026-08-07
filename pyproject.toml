@@ -12,7 +12,7 @@ dependencies = [
 ]
 
 [project.scripts]
-familienfinanzen = "main:main"
+familienfinanzen = "app.application:main"
 
 [build-system]
 requires = ["setuptools>=68.0", "wheel"]
