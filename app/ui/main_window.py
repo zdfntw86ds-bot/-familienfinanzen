@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (
 
 from app.importers import extract_text_from_pdf
 from app.importers.viseca_importer import parse_viseca_pdf
+from app.services.categorizer import categorize
 
 
 class MainWindow(QMainWindow):
@@ -37,8 +38,8 @@ class MainWindow(QMainWindow):
         self.import_button.clicked.connect(self._import_pdf)
         layout.addWidget(self.import_button, alignment=Qt.AlignmentFlag.AlignCenter)
 
-        self.table = QTableWidget(0, 3, central_widget)
-        self.table.setHorizontalHeaderLabels(["Date", "Merchant", "Amount (CHF)"])
+        self.table = QTableWidget(0, 4, central_widget)
+        self.table.setHorizontalHeaderLabels(["Date", "Merchant", "Category", "Amount (CHF)"])
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setAlternatingRowColors(True)
@@ -47,6 +48,7 @@ class MainWindow(QMainWindow):
         header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
         header.setSectionResizeMode(1, QHeaderView.Stretch)
         header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(3, QHeaderView.ResizeToContents)
         layout.addWidget(self.table)
 
         self.setCentralWidget(central_widget)
@@ -86,17 +88,20 @@ class MainWindow(QMainWindow):
                 for row, tx in enumerate(txs):
                     date_item = QTableWidgetItem(tx.date.strftime("%d.%m.%Y"))
                     merchant_item = QTableWidgetItem(tx.merchant_original)
+                    category_item = QTableWidgetItem(categorize(tx.merchant_original))
                     amount_item = QTableWidgetItem(f"{tx.amount:.2f}")
                     # Right-align amount
                     amount_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
                     self.table.setItem(row, 0, date_item)
                     self.table.setItem(row, 1, merchant_item)
-                    self.table.setItem(row, 2, amount_item)
-                # Resize date and amount columns to contents; merchant column stretches
+                    self.table.setItem(row, 2, category_item)
+                    self.table.setItem(row, 3, amount_item)
+                # Resize date and amount columns to contents; merchant/category columns stretch
                 header = self.table.horizontalHeader()
                 header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
                 header.setSectionResizeMode(1, QHeaderView.Stretch)
                 header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
+                header.setSectionResizeMode(3, QHeaderView.ResizeToContents)
                 # restore sorting state
                 self.table.setSortingEnabled(sorting_was_enabled)
                 print(f"Parsed {len(txs)} transactions")
