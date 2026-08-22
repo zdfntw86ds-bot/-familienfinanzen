@@ -1,4 +1,5 @@
 from pathlib import Path
+from datetime import datetime
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
@@ -26,6 +27,7 @@ from PySide6.QtWidgets import (
 
 from app.importers import extract_text_from_pdf
 from app.importers.viseca_importer import parse_viseca_pdf
+from app.services.database_service import DatabaseService
 from app.services.category_store import (
     add_custom_category,
     delete_custom_category,
@@ -130,6 +132,11 @@ class MainWindow(QMainWindow):
 
         self._build_ui()
 
+        # initialize database service and load existing transactions
+        self.db = DatabaseService()
+        self._load_transactions_from_db()
+        self._update_status_bar()
+
     def _build_ui(self) -> None:
         central_widget = QWidget(self)
         layout = QVBoxLayout(central_widget)
@@ -189,34 +196,18 @@ class MainWindow(QMainWindow):
             stem = Path(file_path).stem.lower()
             if stem.startswith("viseca"):
                 txs = parse_viseca_pdf(file_path)
-                # populate table
-                # disable sorting while populating to avoid row reordering
-                sorting_was_enabled = self.table.isSortingEnabled()
-                self.table.setSortingEnabled(False)
-                self.table.setRowCount(len(txs))
-                for row, tx in enumerate(txs):
-                    date_item = QTableWidgetItem(tx.date.strftime("%d.%m.%Y"))
-                    merchant_item = QTableWidgetItem(tx.merchant_original)
-                    category_item = QTableWidgetItem(categorize(tx.merchant_original))
-                    amount_item = QTableWidgetItem(f"{tx.amount:.2f}")
-                    # Right-align amount
-                    amount_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-                    date_item.setFlags(date_item.flags() & ~Qt.ItemIsEditable)
-                    merchant_item.setFlags(merchant_item.flags() & ~Qt.ItemIsEditable)
-                    amount_item.setFlags(amount_item.flags() & ~Qt.ItemIsEditable)
-                    self.table.setItem(row, 0, date_item)
-                    self.table.setItem(row, 1, merchant_item)
-                    self.table.setItem(row, 2, category_item)
-                    self.table.setItem(row, 3, amount_item)
-                # Resize date and amount columns to contents; merchant/category columns stretch
-                header = self.table.horizontalHeader()
-                header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
-                header.setSectionResizeMode(1, QHeaderView.Stretch)
-                header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
-                header.setSectionResizeMode(3, QHeaderView.ResizeToContents)
-                # restore sorting state
-                self.table.setSortingEnabled(sorting_was_enabled)
-                print(f"Parsed {len(txs)} transactions")
+                # store parsed transactions in the database
+                try:
+                    inserted = self.db.insert_transactions(txs, Path(file_path).name)
+                except Exception as exc:  # pragma: no cover - DB failures
+                    QMessageBox.critical(self, "Fehler", f"Import in die Datenbank fehlgeschlagen:\n\n{exc}")
+                    return
+
+                # reload all transactions from database and populate the table
+                all_rows = self.db.load_all_transactions()
+                self._populate_table_from_db(all_rows)
+                self._update_status_bar()
+                print(f"Imported {inserted} transactions")
             else:
                 QMessageBox.information(self, "Unknown importer", "Unknown importer. Please rename the file or add support for this bank.")
         except Exception as exc:  # pragma: no cover - UI feedback path
@@ -465,3 +456,51 @@ class MainWindow(QMainWindow):
                 category_item.setText(categorize(merchant))
 
         self.table.viewport().update()
+
+    def _populate_table_from_db(self, rows: list[dict]) -> None:
+        # rows: list of dicts with keys: id, date (ISO), merchant, category, amount, source_file, imported_at
+        sorting_was_enabled = self.table.isSortingEnabled()
+        self.table.setSortingEnabled(False)
+        self.table.setRowCount(len(rows))
+        for row_index, row in enumerate(rows):
+            # format date from ISO to dd.mm.YYYY if possible
+            date_str = row.get("date") or ""
+            try:
+                dt = datetime.fromisoformat(date_str)
+                date_display = dt.strftime("%d.%m.%Y")
+            except Exception:
+                date_display = date_str
+
+            merchant = row.get("merchant") or ""
+            category = row.get("category") if row.get("category") is not None else categorize(merchant)
+            amount = row.get("amount") or 0.0
+
+            date_item = QTableWidgetItem(date_display)
+            merchant_item = QTableWidgetItem(merchant)
+            category_item = QTableWidgetItem(category)
+            amount_item = QTableWidgetItem(f"{amount:.2f}")
+            amount_item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+
+            date_item.setFlags(date_item.flags() & ~Qt.ItemIsEditable)
+            merchant_item.setFlags(merchant_item.flags() & ~Qt.ItemIsEditable)
+            amount_item.setFlags(amount_item.flags() & ~Qt.ItemIsEditable)
+
+            self.table.setItem(row_index, 0, date_item)
+            self.table.setItem(row_index, 1, merchant_item)
+            self.table.setItem(row_index, 2, category_item)
+            self.table.setItem(row_index, 3, amount_item)
+
+        header = self.table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(1, QHeaderView.Stretch)
+        header.setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        header.setSectionResizeMode(3, QHeaderView.ResizeToContents)
+        self.table.setSortingEnabled(sorting_was_enabled)
+
+    def _load_transactions_from_db(self) -> None:
+        rows = self.db.load_all_transactions()
+        self._populate_table_from_db(rows)
+
+    def _update_status_bar(self) -> None:
+        count = self.db.count_transactions()
+        self.statusBar().showMessage(f"Database: {count} transactions")
