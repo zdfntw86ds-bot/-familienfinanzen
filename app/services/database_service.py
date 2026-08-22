@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+import hashlib
 from datetime import datetime, date
 from decimal import Decimal
 from pathlib import Path
@@ -20,6 +21,7 @@ class DatabaseService:
         DATA_DIR.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(str(self.db_path))
         self._conn.row_factory = sqlite3.Row
+        print(f"[DB DEBUG] DatabaseService initialized with DB path: {self.db_path}")
         self._ensure_tables()
 
     def _ensure_tables(self) -> None:
@@ -33,6 +35,18 @@ class DatabaseService:
                 category TEXT,
                 amount REAL,
                 source_file TEXT,
+                imported_at TEXT
+            )
+            """
+        )
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS imported_files (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                filename TEXT,
+                filepath TEXT,
+                filesize INTEGER,
+                filehash TEXT UNIQUE,
                 imported_at TEXT
             )
             """
@@ -64,7 +78,9 @@ class DatabaseService:
             rows,
         )
         self._conn.commit()
-        return cur.rowcount
+        inserted = cur.rowcount
+        print(f"[DB DEBUG] insert_transactions -> prepared {len(rows)} rows, inserted: {inserted}")
+        return inserted
 
     def load_all_transactions(self) -> List[Dict]:
         cur = self._conn.cursor()
@@ -85,4 +101,49 @@ class DatabaseService:
     def count_transactions(self) -> int:
         cur = self._conn.cursor()
         cur.execute("SELECT COUNT(*) FROM transactions")
+        return int(cur.fetchone()[0])
+
+    def compute_file_hash(self, path: str | Path) -> str:
+        path = Path(path)
+        h = hashlib.sha256()
+        with path.open("rb") as fh:
+            for chunk in iter(lambda: fh.read(8192), b""):
+                h.update(chunk)
+        filehash = h.hexdigest()
+        print(f"[DB DEBUG] compute_file_hash -> {filehash}")
+        return filehash
+
+    def is_file_imported(self, filehash: str) -> bool:
+        cur = self._conn.cursor()
+        # exact query requested by debug spec
+        q_filehash = "SELECT filehash FROM imported_files WHERE filehash = ?"
+        cur.execute(q_filehash, (filehash,))
+        fh_row = cur.fetchone()
+        print(f"[DB DEBUG] is_file_imported - {q_filehash} params: ({filehash},) -> result: {fh_row}")
+
+        # full row for context
+        query = "SELECT id, filename, filepath, filesize, filehash, imported_at FROM imported_files WHERE filehash = ? LIMIT 1"
+        cur.execute(query, (filehash,))
+        row = cur.fetchone()
+        print(f"[DB DEBUG] is_file_imported - full row query: {query} params: ({filehash},) -> row: {row}")
+        return row is not None
+
+    def add_imported_file(self, filename: str, filepath: str, filesize: int, filehash: str) -> int:
+        now = datetime.utcnow().isoformat()
+        cur = self._conn.cursor()
+        try:
+            cur.execute(
+                "INSERT INTO imported_files (filename, filepath, filesize, filehash, imported_at) VALUES (?, ?, ?, ?, ?)",
+                (filename, filepath, filesize, filehash, now),
+            )
+            self._conn.commit()
+            last_id = int(cur.lastrowid)
+            print(f"[DB DEBUG] add_imported_file -> inserted id: {last_id}, filehash: {filehash}")
+            return last_id
+        except sqlite3.IntegrityError:
+            return 0
+
+    def get_imported_file_count(self) -> int:
+        cur = self._conn.cursor()
+        cur.execute("SELECT COUNT(*) FROM imported_files")
         return int(cur.fetchone()[0])

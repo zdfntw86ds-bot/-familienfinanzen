@@ -134,6 +134,7 @@ class MainWindow(QMainWindow):
 
         # initialize database service and load existing transactions
         self.db = DatabaseService()
+        print(f"[UI DEBUG] using database at: {self.db.db_path}")
         self._load_transactions_from_db()
         self._update_status_bar()
 
@@ -181,6 +182,37 @@ class MainWindow(QMainWindow):
 
         # PDF selected
         try:
+            file_hash = self.db.compute_file_hash(file_path)
+        except Exception as exc:  # pragma: no cover - IO failures
+            QMessageBox.critical(self, "Fehler", f"Die Datei konnte nicht gelesen werden.\n\n{exc}")
+            return
+
+        print(f"[UI DEBUG] computed file hash: {file_hash}")
+
+        # Duplicate detection by file hash
+        try:
+            imported_count = self.db.get_imported_file_count()
+            print(f"[UI DEBUG] imported_files current count: {imported_count}")
+        except Exception as exc:
+            print(f"[UI DEBUG] get_imported_file_count raised: {exc}")
+
+        try:
+            imported = self.db.is_file_imported(file_hash)
+            print(f"[UI DEBUG] is_file_imported returned: {imported}")
+            if imported:
+                filename_only = Path(file_path).name
+                QMessageBox.information(
+                    self,
+                    "Already imported",
+                    f"This PDF has already been imported.\n\nFile:\n{filename_only}\n\nNo transactions were imported.",
+                )
+                return
+        except Exception as exc:
+            print(f"[UI DEBUG] is_file_imported raised exception: {exc}")
+            # if duplicate check fails, continue to attempt import
+            pass
+
+        try:
             extracted_text = extract_text_from_pdf(file_path)
         except Exception as exc:  # pragma: no cover - UI feedback path
             QMessageBox.critical(self, "Fehler", f"Die PDF-Datei konnte nicht gelesen werden.\n\n{exc}")
@@ -195,13 +227,31 @@ class MainWindow(QMainWindow):
         try:
             stem = Path(file_path).stem.lower()
             if stem.startswith("viseca"):
+                print("[UI DEBUG] parsing will start")
                 txs = parse_viseca_pdf(file_path)
+                print(f"[UI DEBUG] parsing finished, parsed {len(txs)} transactions")
                 # store parsed transactions in the database
                 try:
+                    print("[UI DEBUG] inserting transactions into DB")
                     inserted = self.db.insert_transactions(txs, Path(file_path).name)
+                    print(f"[UI DEBUG] insert_transactions returned: {inserted}")
                 except Exception as exc:  # pragma: no cover - DB failures
                     QMessageBox.critical(self, "Fehler", f"Import in die Datenbank fehlgeschlagen:\n\n{exc}")
                     return
+
+                # record imported file (remember every imported PDF)
+                try:
+                    filesize = Path(file_path).stat().st_size
+                except Exception:
+                    filesize = 0
+                try:
+                    print("[UI DEBUG] calling add_imported_file")
+                    add_id = self.db.add_imported_file(Path(file_path).name, str(Path(file_path)), filesize, file_hash)
+                    print(f"[UI DEBUG] add_imported_file returned: {add_id}")
+                except Exception as exc:
+                    print(f"[UI DEBUG] add_imported_file raised exception: {exc}")
+                    # failure to record imported file should not block the rest
+                    pass
 
                 # reload all transactions from database and populate the table
                 all_rows = self.db.load_all_transactions()
@@ -503,4 +553,10 @@ class MainWindow(QMainWindow):
 
     def _update_status_bar(self) -> None:
         count = self.db.count_transactions()
-        self.statusBar().showMessage(f"Database: {count} transactions")
+        imported_count = 0
+        try:
+            imported_count = self.db.get_imported_file_count()
+        except Exception:
+            imported_count = 0
+
+        self.statusBar().showMessage(f"Database: {count} transactions | Imported PDFs: {imported_count}")
