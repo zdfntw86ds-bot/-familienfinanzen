@@ -320,14 +320,30 @@ class MainWindow(QMainWindow):
         if not ok or not new_name.strip():
             return
 
-        updated_rules = rename_custom_category(category, new_name.strip())
-        if updated_rules == 0 and new_name.strip().lower() != category.lower():
+        normalized_new = new_name.strip()
+        updated_rules = rename_custom_category(category, normalized_new)
+
+        # Determine whether the rename actually succeeded in the custom categories store.
+        custom_cats = load_custom_categories()
+        succeeded = any(c.lower() == normalized_new.lower() for c in custom_cats)
+        if not succeeded:
             QMessageBox.warning(parent, "Umbenennen fehlgeschlagen", "Die neue Kategorie existiert bereits oder ist ungültig.")
             return
 
-        QMessageBox.information(parent, "Kategorie umbenannt", f"'{category}' wurde in '{new_name.strip()}' umbenannt.\n{updated_rules} Regel(n) aktualisiert.")
+        # Count transactions that will be updated in the current table view
+        updated_transactions = 0
+        for row in range(self.table.rowCount()):
+            category_item = self.table.item(row, 2)
+            if category_item and category_item.text() == category:
+                updated_transactions += 1
+
+        QMessageBox.information(
+            parent,
+            "Category renamed successfully",
+            f"Category renamed successfully\n\nOld category:\n{category}\n\nNew category:\n{normalized_new}\n\nUpdated:\n\n• {updated_transactions} transactions\n• {updated_rules} merchant rules",
+        )
         self._populate_category_list()
-        self._refresh_transaction_categories(changed_categories=[category, new_name.strip()])
+        self._refresh_transaction_categories(changed_categories=[category, normalized_new])
 
     def _delete_category(self, parent: QWidget) -> None:
         category = self._get_selected_category()
@@ -345,7 +361,22 @@ class MainWindow(QMainWindow):
             replacement_value = replacement
 
         rules_updated = delete_custom_category(category, replacement_value)
-        QMessageBox.information(parent, "Kategorie gelöscht", f"'{category}' wurde gelöscht.\n{rules_updated} Regel(n) wurden aktualisiert.")
+
+        # Count transactions that will be updated in the current table view
+        updated_transactions = 0
+        for row in range(self.table.rowCount()):
+            category_item = self.table.item(row, 2)
+            if category_item and category_item.text() == category:
+                updated_transactions += 1
+
+        # Replacement display value
+        replacement_display = replacement if replacement_value is not None else "Unbekannt"
+
+        QMessageBox.information(
+            parent,
+            "Category deleted successfully",
+            f"Category deleted successfully\n\nOld category:\n{category}\n\nReplacement:\n{replacement_display}\n\nUpdated:\n\n• {updated_transactions} transactions\n• {rules_updated} merchant rules",
+        )
         self._populate_category_list()
         self._refresh_transaction_categories(changed_categories=[category])
 
@@ -360,9 +391,6 @@ class MainWindow(QMainWindow):
             return
 
         preview_count = self._count_rules_for_category(source)
-        if preview_count == 0:
-            QMessageBox.information(parent, "Keine Regel getroffen", f"Es gibt keine Regeln mit der Kategorie '{source}'.")
-            return
 
         preview_dialog = QMessageBox(parent)
         preview_dialog.setWindowTitle("Vorschau Zusammenführen")
@@ -375,7 +403,19 @@ class MainWindow(QMainWindow):
             return
 
         updated_rules = merge_category(source, target)
-        QMessageBox.information(parent, "Zusammengeführt", f"'{source}' wurde in '{target}' zusammengeführt.\n{updated_rules} Regel(n) aktualisiert.")
+
+        # Count transactions that will be updated in the current table view
+        updated_transactions = 0
+        for row in range(self.table.rowCount()):
+            category_item = self.table.item(row, 2)
+            if category_item and category_item.text() == source:
+                updated_transactions += 1
+
+        QMessageBox.information(
+            parent,
+            "Category merged successfully",
+            f"Category merged successfully\n\nOld category:\n{source}\n\nNew category:\n{target}\n\nUpdated:\n\n• {updated_transactions} transactions\n• {updated_rules} merchant rules",
+        )
         self._populate_category_list()
         self._refresh_transaction_categories(changed_categories=[source, target])
 
