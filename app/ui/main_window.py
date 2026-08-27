@@ -201,11 +201,17 @@ class MainWindow(QMainWindow):
             print(f"[UI DEBUG] is_file_imported returned: {imported}")
             if imported:
                 filename_only = Path(file_path).name
-                QMessageBox.information(
-                    self,
-                    "Already imported",
-                    f"This PDF has already been imported.\n\nFile:\n{filename_only}\n\nNo transactions were imported.",
-                )
+                imported_meta = None
+                try:
+                    imported_meta = self.db.get_imported_file(file_hash)
+                except Exception:
+                    imported_meta = None
+
+                message_lines = ["This PDF has already been imported.", "", "File:", f"{filename_only}"]
+                if imported_meta and imported_meta.get("imported_at"):
+                    message_lines.extend(["", "Imported on:", f"{imported_meta.get('imported_at')}"])
+                message_lines.extend(["", "No transactions were imported."])
+                QMessageBox.information(self, "Already imported", "\n".join(message_lines))
                 return
         except Exception as exc:
             print(f"[UI DEBUG] is_file_imported raised exception: {exc}")

@@ -147,3 +147,21 @@ class DatabaseService:
         cur = self._conn.cursor()
         cur.execute("SELECT COUNT(*) FROM imported_files")
         return int(cur.fetchone()[0])
+
+    def get_imported_file(self, filehash: str) -> Dict | None:
+        cur = self._conn.cursor()
+        cur.execute(
+            "SELECT id, filename, filepath, filesize, filehash, imported_at FROM imported_files WHERE filehash = ? LIMIT 1",
+            (filehash,),
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        return {
+            "id": row["id"],
+            "filename": row["filename"],
+            "filepath": row["filepath"],
+            "filesize": row["filesize"],
+            "filehash": row["filehash"],
+            "imported_at": row["imported_at"],
+        }
