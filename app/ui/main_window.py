@@ -28,6 +28,8 @@ from PySide6.QtWidgets import (
 from app.importers import extract_text_from_pdf
 from app.importers.viseca_importer import parse_viseca_pdf
 from app.services.database_service import DatabaseService
+from app.services.folder_sync_service import FolderSyncService
+from app.settings import load_settings, save_settings
 from app.services.category_store import (
     add_custom_category,
     delete_custom_category,
@@ -134,6 +136,9 @@ class MainWindow(QMainWindow):
 
         # initialize database service and load existing transactions
         self.db = DatabaseService()
+        self.folder_sync_service = FolderSyncService(self.db)
+        self.finance_folder = load_settings().get("finance_folder")
+        self._update_finance_folder_label()
         print(f"[UI DEBUG] using database at: {self.db.db_path}")
         self._load_transactions_from_db()
         self._update_status_bar()
@@ -148,6 +153,20 @@ class MainWindow(QMainWindow):
         self.import_button.setFixedHeight(64)
         self.import_button.clicked.connect(self._import_pdf)
         layout.addWidget(self.import_button, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        self.select_folder_button = QPushButton("📂 Select Finance Folder", central_widget)
+        self.select_folder_button.setFixedHeight(48)
+        self.select_folder_button.clicked.connect(self._select_finance_folder)
+        layout.addWidget(self.select_folder_button, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        self.sync_button = QPushButton("🔄 Synchronize", central_widget)
+        self.sync_button.setFixedHeight(48)
+        self.sync_button.clicked.connect(self._synchronize_folder)
+        layout.addWidget(self.sync_button, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        self.finance_folder_label = QLabel(central_widget)
+        self.finance_folder_label.setWordWrap(True)
+        layout.addWidget(self.finance_folder_label, alignment=Qt.AlignmentFlag.AlignCenter)
 
         self.manage_categories_button = QPushButton("⚙️ Kategorien verwalten", central_widget)
         self.manage_categories_button.setFixedHeight(48)
@@ -169,6 +188,41 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.table)
 
         self.setCentralWidget(central_widget)
+
+    def _update_finance_folder_label(self) -> None:
+        if not hasattr(self, "finance_folder_label"):
+            return
+        folder = self.finance_folder or "No finance folder selected."
+        self.finance_folder_label.setText(str(folder))
+
+    def _select_finance_folder(self) -> None:
+        current_folder = self.finance_folder or str(Path.home())
+        folder = QFileDialog.getExistingDirectory(self, "Select Finance Folder", current_folder)
+        if not folder:
+            return
+
+        self.finance_folder = folder
+        settings = load_settings()
+        settings["finance_folder"] = folder
+        save_settings(settings)
+        self._update_finance_folder_label()
+
+    def _synchronize_folder(self) -> None:
+        if not self.finance_folder:
+            return
+
+        summary = self.folder_sync_service.sync(self.finance_folder)
+        self._load_transactions_from_db()
+        self._update_status_bar()
+        message = (
+            "Synchronization finished.\n\n"
+            f"Scanned PDFs:\n{summary['scanned_pdfs']}\n\n"
+            f"New imports:\n{summary['new_imports']}\n\n"
+            f"Already imported:\n{summary['already_imported']}\n\n"
+            f"Unknown:\n{summary['unknown']}\n\n"
+            f"Transactions imported:\n{summary['transactions_imported']}"
+        )
+        QMessageBox.information(self, "Synchronization finished", message)
 
     def _import_pdf(self) -> None:
         file_path, _ = QFileDialog.getOpenFileName(
