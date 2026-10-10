@@ -82,7 +82,12 @@ class DatabaseService:
         print(f"[DB DEBUG] insert_transactions -> prepared {len(rows)} rows, inserted: {inserted}")
         return inserted
 
-    def load_all_transactions(self, sort_column: str = "date", sort_direction: str = "DESC") -> List[Dict]:
+    def load_all_transactions(
+        self,
+        sort_column: str = "date",
+        sort_direction: str = "DESC",
+        search_term: str = "",
+    ) -> List[Dict]:
         order_columns = {
             "date": "date",
             "merchant": "merchant COLLATE NOCASE",
@@ -96,10 +101,24 @@ class DatabaseService:
         if direction not in {"ASC", "DESC"}:
             raise ValueError(f"Unsupported transaction sort direction: {sort_direction}")
 
+        search_columns = ("merchant", "category")
+        where_clause = ""
+        params = []
+        if search_term:
+            escaped_term = search_term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            search_pattern = f"%{escaped_term}%"
+            where_clause = " WHERE " + " OR ".join(
+                f"LOWER(COALESCE({column}, '')) LIKE LOWER(?) ESCAPE '\\'"
+                for column in search_columns
+            )
+            params = [search_pattern] * len(search_columns)
+
         cur = self._conn.cursor()
         cur.execute(
             "SELECT id, date, merchant, category, amount, source_file, imported_at "
-            f"FROM transactions ORDER BY {order_columns[sort_column]} {direction}, id ASC"
+            f"FROM transactions{where_clause} "
+            f"ORDER BY {order_columns[sort_column]} {direction}, id ASC",
+            params,
         )
         results = []
         for row in cur.fetchall():

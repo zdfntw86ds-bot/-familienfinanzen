@@ -22,6 +22,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QLabel,
+    QLineEdit,
     QFormLayout,
 )
 
@@ -173,6 +174,11 @@ class MainWindow(QMainWindow):
         self.manage_categories_button.setFixedHeight(48)
         self.manage_categories_button.clicked.connect(self._open_manage_categories_dialog)
         layout.addWidget(self.manage_categories_button, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        self.search_field = QLineEdit(central_widget)
+        self.search_field.setPlaceholderText("Search merchant or category")
+        self.search_field.textChanged.connect(self._on_search_changed)
+        layout.addWidget(self.search_field)
 
         self.table = QTableWidget(0, 4, central_widget)
         self.table.setHorizontalHeaderLabels(["Date", "Merchant", "Category", "Amount (CHF)"])
@@ -616,8 +622,15 @@ class MainWindow(QMainWindow):
         self.table.setSortingEnabled(sorting_was_enabled)
 
     def _load_transactions_from_db(self) -> None:
-        rows = self.db.load_all_transactions(self._sort_column, self._sort_direction)
+        rows = self.db.load_all_transactions(
+            self._sort_column,
+            self._sort_direction,
+            self.search_field.text(),
+        )
         self._populate_table_from_db(rows)
+
+    def _on_search_changed(self, search_term: str) -> None:
+        self._load_transactions_from_db()
 
     def _on_header_clicked(self, column: int) -> None:
         sort_columns = {0: "date", 1: "merchant", 2: "category", 3: "amount"}

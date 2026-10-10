@@ -96,7 +96,7 @@ class TransactionSortingTests(unittest.TestCase):
 
             window._synchronize_folder()
 
-        self.assertEqual(self.database.load_all_transactions.call_args, call("amount", "DESC"))
+        self.assertEqual(self.database.load_all_transactions.call_args, call("amount", "DESC", ""))
         self.assertEqual(window.table.item(0, 3).text(), "100.00")
         window.close()
 
