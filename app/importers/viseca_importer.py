@@ -85,7 +85,14 @@ def parse_viseca_text(text: str) -> List[Transaction]:
             # can't parse this line reliably, skip
             continue
 
-        tx = Transaction(date=dt, merchant_original=merchant.strip(), amount=amt)
+        tx = Transaction(
+            date=dt,
+            merchant_original=merchant.strip(),
+            amount=amt,
+            raw_description=line,
+            payment_method="Card payment",
+            transaction_type="Income" if amt > 0 else "Expense",
+        )
         transactions.append(tx)
 
     return transactions
@@ -122,4 +129,6 @@ def parse_viseca_pdf(path: str | Path) -> List[Transaction]:
 
     # Always parse the extracted text (filename-based importer selection handles detection)
     txs = parse_viseca_text(text)
+    for tx in txs:
+        tx.source_file = Path(path).name
     return txs

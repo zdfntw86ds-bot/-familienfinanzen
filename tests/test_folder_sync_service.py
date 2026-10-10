@@ -3,6 +3,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from app.importers.postfinance_importer import parse_postfinance_pdf
+from app.importers.viseca_importer import parse_viseca_pdf
 from app.services.folder_sync_service import FolderSyncService
 
 
@@ -29,6 +31,20 @@ class FakeDatabase:
 
 
 class FolderSyncServiceTests(unittest.TestCase):
+    def test_importer_for_matches_supported_prefixes_case_insensitively(self):
+        self.assertIs(
+            FolderSyncService._importer_for(Path("Post_2026-06.pdf")),
+            parse_postfinance_pdf,
+        )
+        self.assertIs(
+            FolderSyncService._importer_for(Path("PostFinance_2026-07.pdf")),
+            parse_postfinance_pdf,
+        )
+        self.assertIs(
+            FolderSyncService._importer_for(Path("ViSeCa_2026-08.pdf")),
+            parse_viseca_pdf,
+        )
+
     def test_sync_scans_sorted_pdfs_and_counts_duplicates_and_unknowns(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

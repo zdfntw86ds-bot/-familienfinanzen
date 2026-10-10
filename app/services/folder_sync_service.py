@@ -1,5 +1,6 @@
 from pathlib import Path
 
+from app.importers.postfinance_importer import parse_postfinance_pdf
 from app.importers.viseca_importer import parse_viseca_pdf
 from app.services.database_service import DatabaseService
 
@@ -50,6 +51,9 @@ class FolderSyncService:
 
     @staticmethod
     def _importer_for(path: Path):
-        if path.stem.lower().startswith("viseca"):
+        stem = path.stem.lower()
+        if stem.startswith("viseca"):
             return parse_viseca_pdf
+        if stem.startswith("post"):
+            return parse_postfinance_pdf
         return None

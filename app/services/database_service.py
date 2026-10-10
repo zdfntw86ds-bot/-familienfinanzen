@@ -82,9 +82,25 @@ class DatabaseService:
         print(f"[DB DEBUG] insert_transactions -> prepared {len(rows)} rows, inserted: {inserted}")
         return inserted
 
-    def load_all_transactions(self) -> List[Dict]:
+    def load_all_transactions(self, sort_column: str = "date", sort_direction: str = "DESC") -> List[Dict]:
+        order_columns = {
+            "date": "date",
+            "merchant": "merchant COLLATE NOCASE",
+            "category": "category COLLATE NOCASE",
+            "amount": "amount",
+        }
+        if sort_column not in order_columns:
+            raise ValueError(f"Unsupported transaction sort column: {sort_column}")
+
+        direction = sort_direction.upper()
+        if direction not in {"ASC", "DESC"}:
+            raise ValueError(f"Unsupported transaction sort direction: {sort_direction}")
+
         cur = self._conn.cursor()
-        cur.execute("SELECT id, date, merchant, category, amount, source_file, imported_at FROM transactions ORDER BY id ASC")
+        cur.execute(
+            "SELECT id, date, merchant, category, amount, source_file, imported_at "
+            f"FROM transactions ORDER BY {order_columns[sort_column]} {direction}, id ASC"
+        )
         results = []
         for row in cur.fetchall():
             results.append({

@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.importers import extract_text_from_pdf
+from app.importers.postfinance_importer import parse_postfinance_pdf
 from app.importers.viseca_importer import parse_viseca_pdf
 from app.services.database_service import DatabaseService
 from app.services.folder_sync_service import FolderSyncService
@@ -178,7 +179,10 @@ class MainWindow(QMainWindow):
         self.table.setEditTriggers(QAbstractItemView.DoubleClicked | QAbstractItemView.SelectedClicked)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setAlternatingRowColors(True)
-        self.table.setSortingEnabled(True)
+        self._sort_column = "date"
+        self._sort_direction = "DESC"
+        self.table.setSortingEnabled(False)
+        self.table.horizontalHeader().sectionClicked.connect(self._on_header_clicked)
         self.table.setItemDelegateForColumn(2, CategoryComboDelegate(self.table, apply_callback=self._apply_category_change, categories_loader=load_custom_categories))
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeToContents)
@@ -283,43 +287,47 @@ class MainWindow(QMainWindow):
             self.table.setRowCount(0)
             return
 
-        # Determine importer by filename stem (only support viseca prefix for now)
+        # Determine importer by filename stem.
         try:
             stem = Path(file_path).stem.lower()
             if stem.startswith("viseca"):
-                print("[UI DEBUG] parsing will start")
-                txs = parse_viseca_pdf(file_path)
-                print(f"[UI DEBUG] parsing finished, parsed {len(txs)} transactions")
-                # store parsed transactions in the database
-                try:
-                    print("[UI DEBUG] inserting transactions into DB")
-                    inserted = self.db.insert_transactions(txs, Path(file_path).name)
-                    print(f"[UI DEBUG] insert_transactions returned: {inserted}")
-                except Exception as exc:  # pragma: no cover - DB failures
-                    QMessageBox.critical(self, "Fehler", f"Import in die Datenbank fehlgeschlagen:\n\n{exc}")
-                    return
-
-                # record imported file (remember every imported PDF)
-                try:
-                    filesize = Path(file_path).stat().st_size
-                except Exception:
-                    filesize = 0
-                try:
-                    print("[UI DEBUG] calling add_imported_file")
-                    add_id = self.db.add_imported_file(Path(file_path).name, str(Path(file_path)), filesize, file_hash)
-                    print(f"[UI DEBUG] add_imported_file returned: {add_id}")
-                except Exception as exc:
-                    print(f"[UI DEBUG] add_imported_file raised exception: {exc}")
-                    # failure to record imported file should not block the rest
-                    pass
-
-                # reload all transactions from database and populate the table
-                all_rows = self.db.load_all_transactions()
-                self._populate_table_from_db(all_rows)
-                self._update_status_bar()
-                print(f"Imported {inserted} transactions")
+                importer = parse_viseca_pdf
+            elif stem.startswith("post"):
+                importer = parse_postfinance_pdf
             else:
                 QMessageBox.information(self, "Unknown importer", "Unknown importer. Please rename the file or add support for this bank.")
+                return
+
+            print("[UI DEBUG] parsing will start")
+            txs = importer(file_path)
+            print(f"[UI DEBUG] parsing finished, parsed {len(txs)} transactions")
+            # store parsed transactions in the database
+            try:
+                print("[UI DEBUG] inserting transactions into DB")
+                inserted = self.db.insert_transactions(txs, Path(file_path).name)
+                print(f"[UI DEBUG] insert_transactions returned: {inserted}")
+            except Exception as exc:  # pragma: no cover - DB failures
+                QMessageBox.critical(self, "Fehler", f"Import in die Datenbank fehlgeschlagen:\n\n{exc}")
+                return
+
+            # record imported file (remember every imported PDF)
+            try:
+                filesize = Path(file_path).stat().st_size
+            except Exception:
+                filesize = 0
+            try:
+                print("[UI DEBUG] calling add_imported_file")
+                add_id = self.db.add_imported_file(Path(file_path).name, str(Path(file_path)), filesize, file_hash)
+                print(f"[UI DEBUG] add_imported_file returned: {add_id}")
+            except Exception as exc:
+                print(f"[UI DEBUG] add_imported_file raised exception: {exc}")
+                # failure to record imported file should not block the rest
+                pass
+
+            # reload all transactions from database and populate the table
+            self._load_transactions_from_db()
+            self._update_status_bar()
+            print(f"Imported {inserted} transactions")
         except Exception as exc:  # pragma: no cover - UI feedback path
             QMessageBox.warning(self, "Parser-Fehler", f"Beim Parsen der Datei trat ein Fehler auf:\n\n{exc}")
 
@@ -608,8 +616,22 @@ class MainWindow(QMainWindow):
         self.table.setSortingEnabled(sorting_was_enabled)
 
     def _load_transactions_from_db(self) -> None:
-        rows = self.db.load_all_transactions()
+        rows = self.db.load_all_transactions(self._sort_column, self._sort_direction)
         self._populate_table_from_db(rows)
+
+    def _on_header_clicked(self, column: int) -> None:
+        sort_columns = {0: "date", 1: "merchant", 2: "category", 3: "amount"}
+        selected_column = sort_columns.get(column)
+        if selected_column is None:
+            return
+
+        if selected_column == self._sort_column:
+            self._sort_direction = "ASC" if self._sort_direction == "DESC" else "DESC"
+        else:
+            self._sort_column = selected_column
+            self._sort_direction = "ASC"
+
+        self._load_transactions_from_db()
 
     def _update_status_bar(self) -> None:
         count = self.db.count_transactions()
