@@ -28,8 +28,18 @@ This roadmap describes the intended direction of FamilienFinanzen. Checkboxes di
 - [x] Initial merchant keyword categorization.
 - [x] User-managed merchant/category rules and custom category management.
 - [ ] Improve rule precedence, normalization, and explainability.
+- [x] Persist learned merchant-category rules in SQLite and apply them to future imports.
 - [ ] Add user feedback or correction workflows that can be reliably persisted.
 - [ ] Add regression tests for learned-rule matching and updates.
+
+### Sprint 8.6
+
+- [x] 8.6.1 Persist merchant rules and automatically categorize matching imports.
+- [ ] 8.6.2 Review unknown transactions in a batch.
+- [ ] 8.6.3 Suggest categories for unknown merchants.
+- [ ] 8.6.4 Normalize merchant names conservatively.
+- [ ] 8.6.5 Support persisted manual exceptions and rule management.
+- [ ] 8.6.6 Complete import integration and validation.
 
 ## Version 0.4: Budgets
 

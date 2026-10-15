@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sqlite3
 import hashlib
-from datetime import datetime, date
+from datetime import UTC, datetime, date
 from decimal import Decimal
 from pathlib import Path
 from typing import List, Dict
@@ -56,12 +56,21 @@ class DatabaseService:
             )
             """
         )
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS merchant_category_rules (
+                merchant TEXT PRIMARY KEY COLLATE NOCASE,
+                category TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            )
+            """
+        )
         self._conn.commit()
 
     def insert_transactions(self, txs: List[Transaction], source_file: str) -> int:
         if not txs:
             return 0
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(UTC).isoformat()
         rows = []
         for tx in txs:
             if isinstance(tx.date, date):
@@ -69,11 +78,16 @@ class DatabaseService:
             else:
                 date_str = str(tx.date)
             merchant = tx.merchant_original
-            # store an initial category based on current categorizer
-            try:
-                category = categorize(merchant)
-            except Exception:
-                category = None
+            category = tx.category.strip() if tx.category and tx.category.strip() else None
+            if category is None:
+                category = self.get_merchant_category_rule(merchant)
+            if category is None:
+                try:
+                    category = categorize(merchant)
+                except Exception:
+                    category = None
+                if category and category.casefold() == "unbekannt":
+                    category = None
             amount = float(tx.amount) if isinstance(tx.amount, (Decimal,)) else float(tx.amount)
             rows.append((date_str, merchant, category, amount, source_file, now))
 
@@ -86,6 +100,79 @@ class DatabaseService:
         inserted = cur.rowcount
         print(f"[DB DEBUG] insert_transactions -> prepared {len(rows)} rows, inserted: {inserted}")
         return inserted
+
+    def get_merchant_category_rule(self, merchant: str) -> str | None:
+        normalized_merchant = merchant.strip()
+        if not normalized_merchant:
+            return None
+        cur = self._conn.cursor()
+        cur.execute(
+            "SELECT category FROM merchant_category_rules "
+            "WHERE CASEFOLD(TRIM(merchant)) = CASEFOLD(?) LIMIT 1",
+            (normalized_merchant,),
+        )
+        row = cur.fetchone()
+        return row["category"] if row else None
+
+    def save_merchant_category_rule(
+        self,
+        merchant: str,
+        category: str,
+        *,
+        replace_existing: bool = False,
+    ) -> bool:
+        normalized_merchant = merchant.strip()
+        normalized_category = category.strip()
+        if not normalized_merchant or not normalized_category:
+            raise ValueError("Merchant and category must not be empty")
+
+        cur = self._conn.cursor()
+        cur.execute(
+            "SELECT merchant, category FROM merchant_category_rules "
+            "WHERE CASEFOLD(TRIM(merchant)) = CASEFOLD(?) LIMIT 1",
+            (normalized_merchant,),
+        )
+        existing = cur.fetchone()
+        if existing:
+            if existing["category"].casefold() == normalized_category.casefold():
+                return False
+            if not replace_existing:
+                raise ValueError(
+                    f"A different category rule already exists for {normalized_merchant}"
+                )
+            cur.execute(
+                "UPDATE merchant_category_rules SET category = ?, updated_at = ? "
+                "WHERE merchant = ?",
+                (normalized_category, datetime.now(UTC).isoformat(), existing["merchant"]),
+            )
+        else:
+            cur.execute(
+                "INSERT INTO merchant_category_rules (merchant, category, updated_at) "
+                "VALUES (?, ?, ?)",
+                (normalized_merchant, normalized_category, datetime.now(UTC).isoformat()),
+            )
+        self._conn.commit()
+        return True
+
+    def update_merchant_category_rules(
+        self,
+        old_category: str,
+        new_category: str | None,
+    ) -> int:
+        cur = self._conn.cursor()
+        if new_category is None:
+            cur.execute(
+                "DELETE FROM merchant_category_rules WHERE CASEFOLD(category) = CASEFOLD(?)",
+                (old_category,),
+            )
+        else:
+            cur.execute(
+                "UPDATE merchant_category_rules SET category = ?, updated_at = ? "
+                "WHERE CASEFOLD(category) = CASEFOLD(?)",
+                (new_category, datetime.now(UTC).isoformat(), old_category),
+            )
+        self._conn.commit()
+        return cur.rowcount
 
     def load_all_transactions(
         self,
@@ -206,7 +293,7 @@ class DatabaseService:
         return row is not None
 
     def add_imported_file(self, filename: str, filepath: str, filesize: int, filehash: str) -> int:
-        now = datetime.utcnow().isoformat()
+        now = datetime.now(UTC).isoformat()
         cur = self._conn.cursor()
         try:
             cur.execute(

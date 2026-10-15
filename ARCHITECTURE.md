@@ -59,9 +59,9 @@ The transaction table requests ordered and filtered results from `DatabaseServic
 
 ### Services: `app/services/`
 
-- `database_service.py` owns SQLite connection setup, table creation, transaction reads/writes, ordered/search queries, and imported-file history operations.
+- `database_service.py` owns SQLite connection setup, table creation, transaction reads/writes, ordered/search queries, imported-file history, and persistent merchant-category rules.
 - `folder_sync_service.py` scans folders, identifies supported PDFs by filename prefix, skips known content hashes, routes to the relevant importer, and records successful imports.
-- `categorizer.py` applies built-in merchant keyword rules and saved user rules.
+- `categorizer.py` applies built-in merchant keyword rules and legacy saved JSON rules. During import, `DatabaseService` first preserves an explicit transaction category, then checks its SQLite merchant rule, then falls back to the existing categorizer. Unknown results remain unset in SQLite and display as “Unbekannt” in the table.
 - `category_store.py` reads and writes merchant rules and custom category lists in JSON files.
 
 Services isolate application workflows and storage operations from UI event handling. This makes non-visual behavior easier to test and keeps UI logic focused on interaction.
@@ -80,10 +80,11 @@ Importers adapt source-specific formats to `Transaction` objects. They do not de
 
 - `transactions`: `id`, `date`, `merchant`, `category`, `amount`, `source_file`, and `imported_at`.
 - `imported_files`: file metadata, content hash, and import timestamp. `filehash` is unique and supports duplicate detection.
+- `merchant_category_rules`: exact merchant names and learned categories, matched case-insensitively and created idempotently for existing databases.
 
 The default database path is `data/finance.db`. Transaction sorting uses an allowlist of supported sort columns and validated direction values. Search binds its term as a parameter and applies case-insensitive `LIKE` matching to merchant and category; wildcard characters in the input are escaped so a typed percent or underscore is treated literally. Payment method and transaction type are not currently database columns.
 
-`config/settings.json` stores application settings such as the selected finance folder. `data/categories.json` stores merchant/category rules, and `data/custom_categories.json` stores custom category names. These JSON files are separate from transaction persistence.
+`config/settings.json` stores application settings such as the selected finance folder. `data/categories.json` retains legacy merchant/category rules, and `data/custom_categories.json` stores custom category names. New learned rules are stored in SQLite; the existing “all future transactions” category action writes to both stores for compatibility.
 
 ### Reporting: `app/reports/`
 

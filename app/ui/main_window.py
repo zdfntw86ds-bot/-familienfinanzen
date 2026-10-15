@@ -111,11 +111,11 @@ class CategoryComboDelegate(QStyledItemDelegate):
             return
 
         change_dialog = QMessageBox(editor.parent())
-        change_dialog.setWindowTitle("Change category")
-        change_dialog.setText("How should this change be applied?")
-        only_this_button = change_dialog.addButton("Only this transaction", QMessageBox.AcceptRole)
-        all_future_button = change_dialog.addButton("All future transactions of this merchant", QMessageBox.AcceptRole)
-        cancel_button = change_dialog.addButton("Cancel", QMessageBox.RejectRole)
+        change_dialog.setWindowTitle("Kategorie ändern")
+        change_dialog.setText("Wie soll diese Änderung angewendet werden?")
+        only_this_button = change_dialog.addButton("Nur diese Transaktion", QMessageBox.AcceptRole)
+        all_future_button = change_dialog.addButton("Alle zukünftigen Transaktionen dieses Händlers", QMessageBox.AcceptRole)
+        cancel_button = change_dialog.addButton("Abbrechen", QMessageBox.RejectRole)
         change_dialog.setDefaultButton(only_this_button)
         change_dialog.exec()
 
@@ -393,6 +393,11 @@ class MainWindow(QMainWindow):
 
     def _apply_category_change(self, row: int, merchant: str, category: str, apply_all: bool) -> None:
         if apply_all:
+            self.db.save_merchant_category_rule(
+                merchant,
+                category,
+                replace_existing=True,
+            )
             set_user_category(merchant, category)
             updated_rows = 0
             for current_row in range(self.table.rowCount()):
@@ -498,6 +503,7 @@ class MainWindow(QMainWindow):
         if not succeeded:
             QMessageBox.warning(parent, "Umbenennen fehlgeschlagen", "Die neue Kategorie existiert bereits oder ist ungültig.")
             return
+        self.db.update_merchant_category_rules(category, normalized_new)
 
         # Count transactions that will be updated in the current table view
         updated_transactions = 0
@@ -530,6 +536,7 @@ class MainWindow(QMainWindow):
             replacement_value = replacement
 
         rules_updated = delete_custom_category(category, replacement_value)
+        self.db.update_merchant_category_rules(category, replacement_value)
 
         # Count transactions that will be updated in the current table view
         updated_transactions = 0
@@ -572,6 +579,7 @@ class MainWindow(QMainWindow):
             return
 
         updated_rules = merge_category(source, target)
+        self.db.update_merchant_category_rules(source, target)
 
         # Count transactions that will be updated in the current table view
         updated_transactions = 0
