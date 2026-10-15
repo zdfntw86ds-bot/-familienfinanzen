@@ -18,6 +18,7 @@ This roadmap describes the intended direction of FamilienFinanzen. Checkboxes di
 - [x] Default to newest-first date ordering.
 - [x] Live, case-insensitive partial search over persisted merchant and category values.
 - [x] Preserve the active sort during search and table reloads.
+- [x] Add SQLite-backed date, category, and amount filters that compose with search and sorting.
 - [ ] Define and complete persistence behavior for individual transaction edits.
 - [ ] Add a reviewed SQLite migration for payment method and transaction type, then expose those fields to search.
 - [ ] Add transaction deletion and other editing workflows with explicit data-safety behavior.

@@ -1,7 +1,8 @@
 from pathlib import Path
 from datetime import datetime
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QDate, QSignalBlocker, Qt
+from PySide6.QtGui import QDoubleValidator
 from PySide6.QtWidgets import (
     QFileDialog,
     QMainWindow,
@@ -24,6 +25,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QLineEdit,
     QFormLayout,
+    QDateEdit,
 )
 
 from app.importers import extract_text_from_pdf
@@ -176,9 +178,61 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.manage_categories_button, alignment=Qt.AlignmentFlag.AlignCenter)
 
         self.search_field = QLineEdit(central_widget)
-        self.search_field.setPlaceholderText("Search merchant or category")
+        self.search_field.setPlaceholderText("Händler oder Kategorie suchen")
         self.search_field.textChanged.connect(self._on_search_changed)
         layout.addWidget(self.search_field)
+
+        filter_layout = QHBoxLayout()
+        self.date_filter = QComboBox(central_widget)
+        self.date_filter.addItems(
+            [
+                "Alle Daten",
+                "Aktueller Monat",
+                "Letzter Monat",
+                "Aktuelles Jahr",
+                "Benutzerdefiniert",
+            ]
+        )
+        self.date_filter.currentIndexChanged.connect(self._on_date_filter_changed)
+        filter_layout.addWidget(self.date_filter)
+
+        self.date_from_filter = QDateEdit(QDate.currentDate(), central_widget)
+        self.date_from_filter.setCalendarPopup(True)
+        self.date_from_filter.setDisplayFormat("dd.MM.yyyy")
+        self.date_from_filter.setToolTip("Von")
+        self.date_from_filter.dateChanged.connect(self._on_filter_changed)
+        self.date_from_filter.hide()
+        filter_layout.addWidget(self.date_from_filter)
+
+        self.date_to_filter = QDateEdit(QDate.currentDate(), central_widget)
+        self.date_to_filter.setCalendarPopup(True)
+        self.date_to_filter.setDisplayFormat("dd.MM.yyyy")
+        self.date_to_filter.setToolTip("Bis")
+        self.date_to_filter.dateChanged.connect(self._on_filter_changed)
+        self.date_to_filter.hide()
+        filter_layout.addWidget(self.date_to_filter)
+
+        self.category_filter = QComboBox(central_widget)
+        self.category_filter.addItem("Alle Kategorien", None)
+        self.category_filter.currentIndexChanged.connect(self._on_filter_changed)
+        filter_layout.addWidget(self.category_filter)
+
+        self.min_amount_filter = QLineEdit(central_widget)
+        self.min_amount_filter.setPlaceholderText("Betrag von (CHF)")
+        self.min_amount_filter.setValidator(QDoubleValidator(-1e12, 1e12, 2, self.min_amount_filter))
+        self.min_amount_filter.textChanged.connect(self._on_filter_changed)
+        filter_layout.addWidget(self.min_amount_filter)
+
+        self.max_amount_filter = QLineEdit(central_widget)
+        self.max_amount_filter.setPlaceholderText("Betrag bis (CHF)")
+        self.max_amount_filter.setValidator(QDoubleValidator(-1e12, 1e12, 2, self.max_amount_filter))
+        self.max_amount_filter.textChanged.connect(self._on_filter_changed)
+        filter_layout.addWidget(self.max_amount_filter)
+
+        self.reset_filters_button = QPushButton("Filter zurücksetzen", central_widget)
+        self.reset_filters_button.clicked.connect(self._reset_filters)
+        filter_layout.addWidget(self.reset_filters_button)
+        layout.addLayout(filter_layout)
 
         self.table = QTableWidget(0, 4, central_widget)
         self.table.setHorizontalHeaderLabels(["Date", "Merchant", "Category", "Amount (CHF)"])
@@ -622,12 +676,120 @@ class MainWindow(QMainWindow):
         self.table.setSortingEnabled(sorting_was_enabled)
 
     def _load_transactions_from_db(self) -> None:
-        rows = self.db.load_all_transactions(
-            self._sort_column,
-            self._sort_direction,
-            self.search_field.text(),
-        )
+        self._refresh_category_filter_options()
+        filters = self._transaction_filter_values()
+        if filters:
+            rows = self.db.load_all_transactions(
+                self._sort_column,
+                self._sort_direction,
+                self.search_field.text(),
+                **filters,
+            )
+        else:
+            rows = self.db.load_all_transactions(
+                self._sort_column,
+                self._sort_direction,
+                self.search_field.text(),
+            )
         self._populate_table_from_db(rows)
+
+    def _transaction_filter_values(self) -> dict[str, str | float]:
+        filters: dict[str, str | float] = {}
+        selected_category = self.category_filter.currentData()
+        if selected_category:
+            filters["category"] = selected_category
+
+        date_mode = self.date_filter.currentIndex()
+        today = QDate.currentDate()
+        if date_mode == 1:
+            start = QDate(today.year(), today.month(), 1)
+            end = start.addMonths(1).addDays(-1)
+            filters["date_from"] = start.toString("yyyy-MM-dd")
+            filters["date_to"] = end.toString("yyyy-MM-dd")
+        elif date_mode == 2:
+            current_month = QDate(today.year(), today.month(), 1)
+            end = current_month.addDays(-1)
+            start = QDate(end.year(), end.month(), 1)
+            filters["date_from"] = start.toString("yyyy-MM-dd")
+            filters["date_to"] = end.toString("yyyy-MM-dd")
+        elif date_mode == 3:
+            filters["date_from"] = QDate(today.year(), 1, 1).toString("yyyy-MM-dd")
+            filters["date_to"] = QDate(today.year(), 12, 31).toString("yyyy-MM-dd")
+        elif date_mode == 4:
+            filters["date_from"] = self.date_from_filter.date().toString("yyyy-MM-dd")
+            filters["date_to"] = self.date_to_filter.date().toString("yyyy-MM-dd")
+
+        min_amount = self._amount_filter_value(self.min_amount_filter.text())
+        max_amount = self._amount_filter_value(self.max_amount_filter.text())
+        if min_amount is not None:
+            filters["min_amount"] = min_amount
+        if max_amount is not None:
+            filters["max_amount"] = max_amount
+        return filters
+
+    @staticmethod
+    def _amount_filter_value(value: str) -> float | None:
+        normalized = value.strip().replace(",", ".")
+        if not normalized:
+            return None
+        try:
+            return float(normalized)
+        except ValueError:
+            return None
+
+    def _refresh_category_filter_options(self) -> None:
+        selected = self.category_filter.currentData()
+        categories = self.db.load_transaction_categories()
+        blocker = QSignalBlocker(self.category_filter)
+        self.category_filter.clear()
+        self.category_filter.addItem("Alle Kategorien", None)
+        seen_categories = set()
+        for category in categories:
+            normalized = category.casefold()
+            if normalized == "unbekannt" or normalized in seen_categories:
+                continue
+            seen_categories.add(normalized)
+            self.category_filter.addItem(category, category)
+        self.category_filter.addItem("Unbekannt", "Unbekannt")
+        if selected:
+            index = self.category_filter.findData(selected)
+            if index >= 0:
+                self.category_filter.setCurrentIndex(index)
+        del blocker
+
+    def _on_date_filter_changed(self, index: int) -> None:
+        custom_range = index == 4
+        self.date_from_filter.setVisible(custom_range)
+        self.date_to_filter.setVisible(custom_range)
+        self._load_transactions_from_db()
+
+    def _on_filter_changed(self, *_args) -> None:
+        self._load_transactions_from_db()
+
+    def _reset_filters(self) -> None:
+        blockers = [
+            QSignalBlocker(widget)
+            for widget in (
+                self.date_filter,
+                self.date_from_filter,
+                self.date_to_filter,
+                self.category_filter,
+                self.min_amount_filter,
+                self.max_amount_filter,
+                self.search_field,
+            )
+        ]
+        self.date_filter.setCurrentIndex(0)
+        self.date_from_filter.setDate(QDate.currentDate())
+        self.date_to_filter.setDate(QDate.currentDate())
+        self.category_filter.setCurrentIndex(0)
+        self.min_amount_filter.clear()
+        self.max_amount_filter.clear()
+        self.search_field.clear()
+        self.date_from_filter.hide()
+        self.date_to_filter.hide()
+        del blockers
+        self._load_transactions_from_db()
 
     def _on_search_changed(self, search_term: str) -> None:
         self._load_transactions_from_db()

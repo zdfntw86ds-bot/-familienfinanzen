@@ -21,6 +21,11 @@ class DatabaseService:
         DATA_DIR.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(str(self.db_path))
         self._conn.row_factory = sqlite3.Row
+        self._conn.create_function(
+            "CASEFOLD",
+            1,
+            lambda value: value.casefold() if value is not None else "",
+        )
         print(f"[DB DEBUG] DatabaseService initialized with DB path: {self.db_path}")
         self._ensure_tables()
 
@@ -87,6 +92,11 @@ class DatabaseService:
         sort_column: str = "date",
         sort_direction: str = "DESC",
         search_term: str = "",
+        date_from: str | None = None,
+        date_to: str | None = None,
+        category: str | None = None,
+        min_amount: float | None = None,
+        max_amount: float | None = None,
     ) -> List[Dict]:
         order_columns = {
             "date": "date",
@@ -101,17 +111,40 @@ class DatabaseService:
         if direction not in {"ASC", "DESC"}:
             raise ValueError(f"Unsupported transaction sort direction: {sort_direction}")
 
-        search_columns = ("merchant", "category")
-        where_clause = ""
+        conditions = []
         params = []
         if search_term:
             escaped_term = search_term.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
             search_pattern = f"%{escaped_term}%"
-            where_clause = " WHERE " + " OR ".join(
+            conditions.append("(" + " OR ".join(
                 f"LOWER(COALESCE({column}, '')) LIKE LOWER(?) ESCAPE '\\'"
-                for column in search_columns
-            )
-            params = [search_pattern] * len(search_columns)
+                for column in ("merchant", "category")
+            ) + ")")
+            params.extend([search_pattern, search_pattern])
+
+        if date_from:
+            conditions.append("date >= ?")
+            params.append(date_from)
+        if date_to:
+            conditions.append("date <= ?")
+            params.append(date_to)
+        if category:
+            if category.casefold() == "unbekannt":
+                conditions.append(
+                    "(category IS NULL OR TRIM(category) = '' OR "
+                    "CASEFOLD(TRIM(category)) = CASEFOLD(?))"
+                )
+            else:
+                conditions.append("CASEFOLD(TRIM(COALESCE(category, ''))) = CASEFOLD(?)")
+            params.append(category)
+        if min_amount is not None:
+            conditions.append("amount >= ?")
+            params.append(min_amount)
+        if max_amount is not None:
+            conditions.append("amount <= ?")
+            params.append(max_amount)
+
+        where_clause = " WHERE " + " AND ".join(conditions) if conditions else ""
 
         cur = self._conn.cursor()
         cur.execute(
@@ -132,6 +165,15 @@ class DatabaseService:
                 "imported_at": row["imported_at"],
             })
         return results
+
+    def load_transaction_categories(self) -> list[str]:
+        cur = self._conn.cursor()
+        cur.execute(
+            "SELECT DISTINCT TRIM(category) AS category FROM transactions "
+            "WHERE category IS NOT NULL AND TRIM(category) != '' "
+            "ORDER BY category COLLATE NOCASE"
+        )
+        return [row["category"] for row in cur.fetchall()]
 
     def count_transactions(self) -> int:
         cur = self._conn.cursor()

@@ -12,6 +12,7 @@ All notable project changes are recorded here. This project follows [Keep a Chan
 - Added a PostFinance PDF importer alongside the Viseca import path.
 - Added SQLite-backed transaction table sorting by date, merchant, category, and amount, with date descending as the default.
 - Added live, case-insensitive, partial SQLite search over persisted merchant and category values; clearing search restores the full ordered list.
+- Added composable SQLite filters for date periods, categories, and amount ranges, with German controls and filter reset.
 
 ### Notes
 

@@ -106,7 +106,7 @@ The package is currently an extension point; report generation is not implemente
 
 ### Search and Sorting
 
-The table header updates the active sort key and direction. The search field reloads on each text change. Both values are passed to `DatabaseService`, which applies SQL `ORDER BY` and optional `WHERE ... LIKE` before returning rows. Clearing the field sends an empty search term and restores the full list in the active order.
+The table header updates the active sort key and direction. The search field reloads on each text change. Search, date, category, and amount criteria are passed to `DatabaseService`, which composes parameterized SQLite `WHERE` clauses before applying the active SQL `ORDER BY`. Category options are loaded from stored transaction categories, with an explicit “Unbekannt” option that also matches empty categories. Resetting filters clears search and restores all rows in the active sort order.
 
 ## Extension Points
 
