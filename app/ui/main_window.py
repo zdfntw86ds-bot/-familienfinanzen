@@ -45,6 +45,7 @@ from app.services.category_store import (
     set_user_category,
 )
 from app.services.categorizer import categorize
+from app.ui.unknown_transaction_review_dialog import UnknownTransactionReviewDialog
 
 
 class CategoryComboDelegate(QStyledItemDelegate):
@@ -157,6 +158,11 @@ class MainWindow(QMainWindow):
         self.import_button.setFixedHeight(64)
         self.import_button.clicked.connect(self._import_pdf)
         layout.addWidget(self.import_button, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        self.unknown_transactions_button = QPushButton("Unbekannte Transaktionen (0)", central_widget)
+        self.unknown_transactions_button.setFixedHeight(48)
+        self.unknown_transactions_button.clicked.connect(self._open_unknown_review)
+        layout.addWidget(self.unknown_transactions_button, alignment=Qt.AlignmentFlag.AlignCenter)
 
         self.select_folder_button = QPushButton("📂 Select Finance Folder", central_widget)
         self.select_folder_button.setFixedHeight(48)
@@ -278,6 +284,8 @@ class MainWindow(QMainWindow):
         summary = self.folder_sync_service.sync(self.finance_folder)
         self._load_transactions_from_db()
         self._update_status_bar()
+        if self.db.count_unknown_transactions():
+            self._open_unknown_review()
         message = (
             "Synchronization finished.\n\n"
             f"Scanned PDFs:\n{summary['scanned_pdfs']}\n\n"
@@ -387,6 +395,8 @@ class MainWindow(QMainWindow):
             # reload all transactions from database and populate the table
             self._load_transactions_from_db()
             self._update_status_bar()
+            if self.db.count_unknown_transactions():
+                self._open_unknown_review()
             print(f"Imported {inserted} transactions")
         except Exception as exc:  # pragma: no cover - UI feedback path
             QMessageBox.warning(self, "Parser-Fehler", f"Beim Parsen der Datei trat ein Fehler auf:\n\n{exc}")
@@ -416,6 +426,25 @@ class MainWindow(QMainWindow):
             category_item = self.table.item(row, 2)
             if category_item:
                 category_item.setText(category)
+
+    def _open_unknown_review(self) -> None:
+        if not hasattr(self, "db"):
+            return
+        dialog = UnknownTransactionReviewDialog(
+            self.db,
+            category_creator=lambda: self._create_category(self),
+            parent=self,
+        )
+        dialog.exec()
+        self._load_transactions_from_db()
+        self._update_status_bar()
+        if dialog.saved:
+            remaining = self.db.count_unknown_transactions()
+            QMessageBox.information(
+                self,
+                "Speichern abgeschlossen",
+                f"Noch uncategorisierte Transaktionen: {remaining}",
+            )
 
     def _open_manage_categories_dialog(self) -> None:
         dialog = QDialog(self)
@@ -472,17 +501,23 @@ class MainWindow(QMainWindow):
         return selected_items[0].text()
 
     def _add_category(self, parent: QWidget) -> None:
-        new_category, ok = QInputDialog.getText(parent, "Neue Kategorie", "Kategorie hinzufügen:")
-        if not ok or not new_category.strip():
-            return
-
-        added = add_custom_category(new_category.strip())
+        added = self._create_category(parent)
         if not added:
-            QMessageBox.warning(parent, "Ungültig", "Der Kategoriename darf nicht leer sein.")
             return
 
         QMessageBox.information(parent, "Kategorie hinzugefügt", f"Kategorie '{added}' wurde hinzugefügt.")
         self._populate_category_list()
+
+    def _create_category(self, parent: QWidget) -> str | None:
+        new_category, ok = QInputDialog.getText(parent, "Neue Kategorie", "Kategorie hinzufügen:")
+        if not ok or not new_category.strip():
+            return None
+        normalized = new_category.strip()
+        for category in self.db.load_categories():
+            if category.casefold() == normalized.casefold():
+                return category
+        added = add_custom_category(normalized)
+        return self.db.add_category(added) if added else None
 
     def _rename_category(self, parent: QWidget) -> None:
         category = self._get_selected_category()
@@ -700,6 +735,11 @@ class MainWindow(QMainWindow):
                 self.search_field.text(),
             )
         self._populate_table_from_db(rows)
+        if hasattr(self, "unknown_transactions_button"):
+            unknown_count = self.db.count_unknown_transactions()
+            self.unknown_transactions_button.setText(
+                f"Unbekannte Transaktionen ({unknown_count})"
+            )
 
     def _transaction_filter_values(self) -> dict[str, str | float]:
         filters: dict[str, str | float] = {}
@@ -747,7 +787,7 @@ class MainWindow(QMainWindow):
 
     def _refresh_category_filter_options(self) -> None:
         selected = self.category_filter.currentData()
-        categories = self.db.load_transaction_categories()
+        categories = self.db.load_categories()
         blocker = QSignalBlocker(self.category_filter)
         self.category_filter.clear()
         self.category_filter.addItem("Alle Kategorien", None)

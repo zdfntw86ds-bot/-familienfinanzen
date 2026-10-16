@@ -9,10 +9,23 @@ from typing import List, Dict
 
 from app.models.transaction import Transaction
 from app.services.categorizer import categorize
+from app.services.category_store import load_custom_categories
 
 
 DATA_DIR = Path(__file__).resolve().parents[2] / "data"
 DB_PATH = DATA_DIR / "finance.db"
+BUILT_IN_CATEGORIES = (
+    "Lebensmittel",
+    "Essen",
+    "Technik",
+    "Reisen",
+    "Auto",
+    "Gesundheit",
+    "Freizeit",
+    "Wohnen",
+    "Software",
+    "ÖV",
+)
 
 
 class DatabaseService:
@@ -65,7 +78,145 @@ class DatabaseService:
             )
             """
         )
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS categories (
+                name TEXT PRIMARY KEY COLLATE NOCASE
+            )
+            """
+        )
+        self._seed_categories(cur)
         self._conn.commit()
+
+    def _seed_categories(self, cur: sqlite3.Cursor) -> None:
+        cur.execute(
+            "SELECT category FROM transactions WHERE category IS NOT NULL AND TRIM(category) != ''"
+        )
+        categories = set(BUILT_IN_CATEGORIES)
+        categories.update(load_custom_categories())
+        categories.update(row["category"].strip() for row in cur.fetchall())
+        cur.execute("SELECT category FROM merchant_category_rules")
+        categories.update(row["category"].strip() for row in cur.fetchall())
+        cur.executemany(
+            "INSERT OR IGNORE INTO categories (name) VALUES (?)",
+            [(category,) for category in categories if category.strip()],
+        )
+
+    def load_categories(self) -> list[str]:
+        cur = self._conn.cursor()
+        cur.execute("SELECT name FROM categories ORDER BY name COLLATE NOCASE")
+        return [row["name"] for row in cur.fetchall()]
+
+    def add_category(self, category: str) -> str:
+        normalized = category.strip()
+        if not normalized:
+            raise ValueError("Category must not be empty")
+        cur = self._conn.cursor()
+        cur.execute("INSERT OR IGNORE INTO categories (name) VALUES (?)", (normalized,))
+        cur.execute("SELECT name FROM categories WHERE name = ? COLLATE NOCASE", (normalized,))
+        row = cur.fetchone()
+        self._conn.commit()
+        return row["name"]
+
+    def load_unknown_transactions(
+        self,
+        sort_column: str = "date",
+        sort_direction: str = "DESC",
+    ) -> List[Dict]:
+        order_columns = {
+            "date": "date",
+            "merchant": "merchant COLLATE NOCASE",
+            "amount": "amount",
+        }
+        if sort_column not in order_columns:
+            raise ValueError(f"Unsupported transaction sort column: {sort_column}")
+        direction = sort_direction.upper()
+        if direction not in {"ASC", "DESC"}:
+            raise ValueError(f"Unsupported transaction sort direction: {sort_direction}")
+        cur = self._conn.cursor()
+        cur.execute(
+            "SELECT id, date, merchant, category, amount, source_file, imported_at "
+            "FROM transactions WHERE category IS NULL OR TRIM(category) = '' "
+            "OR CASEFOLD(TRIM(category)) = CASEFOLD(?) "
+            f"ORDER BY {order_columns[sort_column]} {direction}, id ASC",
+            ("Unbekannt",),
+        )
+        return [dict(row) for row in cur.fetchall()]
+
+    def count_unknown_transactions(self) -> int:
+        cur = self._conn.cursor()
+        cur.execute(
+            "SELECT COUNT(*) FROM transactions WHERE category IS NULL OR TRIM(category) = '' "
+            "OR CASEFOLD(TRIM(category)) = CASEFOLD(?)",
+            ("Unbekannt",),
+        )
+        return int(cur.fetchone()[0])
+
+    def save_reviewed_transactions(
+        self,
+        categories_by_id: dict[int, str | None],
+        merchant_rules: list[tuple[str, str]],
+        replace_merchants: set[str] | None = None,
+    ) -> None:
+        replace_keys = {merchant.strip().casefold() for merchant in replace_merchants or set()}
+        rules_by_merchant: dict[str, tuple[str, str]] = {}
+        for merchant, category in merchant_rules:
+            normalized_merchant = merchant.strip()
+            normalized_category = category.strip()
+            if not normalized_merchant or not normalized_category:
+                continue
+            key = normalized_merchant.casefold()
+            previous = rules_by_merchant.get(key)
+            if previous and previous[1].casefold() != normalized_category.casefold():
+                raise ValueError(f"Conflicting reviewed rules for merchant: {normalized_merchant}")
+            rules_by_merchant[key] = (normalized_merchant, normalized_category)
+
+        with self._conn:
+            cur = self._conn.cursor()
+            for transaction_id, category in categories_by_id.items():
+                normalized_category = category.strip() if category and category.strip() else None
+                if normalized_category and normalized_category.casefold() == "unbekannt":
+                    normalized_category = None
+                if normalized_category:
+                    cur.execute(
+                        "INSERT OR IGNORE INTO categories (name) VALUES (?)",
+                        (normalized_category,),
+                    )
+                cur.execute(
+                    "UPDATE transactions SET category = ? WHERE id = ?",
+                    (normalized_category, transaction_id),
+                )
+
+            for merchant, category in rules_by_merchant.values():
+                cur.execute(
+                    "SELECT merchant, category FROM merchant_category_rules "
+                    "WHERE CASEFOLD(TRIM(merchant)) = CASEFOLD(?) LIMIT 1",
+                    (merchant,),
+                )
+                existing = cur.fetchone()
+                if existing and existing["category"].casefold() != category.casefold():
+                    if merchant.casefold() not in replace_keys:
+                        raise ValueError(
+                            f"A different category rule already exists for {merchant}"
+                        )
+                    cur.execute(
+                        "UPDATE merchant_category_rules SET category = ?, updated_at = ? "
+                        "WHERE merchant = ?",
+                        (category, datetime.now(UTC).isoformat(), existing["merchant"]),
+                    )
+                elif not existing:
+                    cur.execute(
+                        "INSERT INTO merchant_category_rules (merchant, category, updated_at) "
+                        "VALUES (?, ?, ?)",
+                        (merchant, category, datetime.now(UTC).isoformat()),
+                    )
+                cur.execute(
+                    "UPDATE transactions SET category = ? "
+                    "WHERE CASEFOLD(TRIM(COALESCE(merchant, ''))) = CASEFOLD(?) "
+                    "AND (category IS NULL OR TRIM(category) = '' "
+                    "OR CASEFOLD(TRIM(category)) = CASEFOLD(?))",
+                    (category, merchant.strip(), "Unbekannt"),
+                )
 
     def insert_transactions(self, txs: List[Transaction], source_file: str) -> int:
         if not txs:

@@ -35,7 +35,8 @@ This roadmap describes the intended direction of FamilienFinanzen. Checkboxes di
 ### Sprint 8.6
 
 - [x] 8.6.1 Persist merchant rules and automatically categorize matching imports.
-- [ ] 8.6.2 Review unknown transactions in a batch.
+- [x] 8.6.2 Review unknown transactions in a batch, save individual or batch categories, and optionally learn merchant rules.
+- [x] 8.6.2.1 Apply explicitly saved learning rules to exact merchant matches that are still uncategorized, preserving existing categories.
 - [ ] 8.6.3 Suggest categories for unknown merchants.
 - [ ] 8.6.4 Normalize merchant names conservatively.
 - [ ] 8.6.5 Support persisted manual exceptions and rule management.

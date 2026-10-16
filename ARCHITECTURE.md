@@ -59,7 +59,7 @@ The transaction table requests ordered and filtered results from `DatabaseServic
 
 ### Services: `app/services/`
 
-- `database_service.py` owns SQLite connection setup, table creation, transaction reads/writes, ordered/search queries, imported-file history, and persistent merchant-category rules.
+- `database_service.py` owns SQLite connection setup, table creation, transaction reads/writes, ordered/search queries, imported-file history, category definitions, persistent merchant-category rules, and atomic batch-review saves.
 - `folder_sync_service.py` scans folders, identifies supported PDFs by filename prefix, skips known content hashes, routes to the relevant importer, and records successful imports.
 - `categorizer.py` applies built-in merchant keyword rules and legacy saved JSON rules. During import, `DatabaseService` first preserves an explicit transaction category, then checks its SQLite merchant rule, then falls back to the existing categorizer. Unknown results remain unset in SQLite and display as “Unbekannt” in the table.
 - `category_store.py` reads and writes merchant rules and custom category lists in JSON files.
@@ -76,15 +76,18 @@ Importers adapt source-specific formats to `Transaction` objects. They do not de
 
 ### Persistence
 
-`DatabaseService` initializes two SQLite tables:
+`DatabaseService` initializes these SQLite tables:
 
 - `transactions`: `id`, `date`, `merchant`, `category`, `amount`, `source_file`, and `imported_at`.
 - `imported_files`: file metadata, content hash, and import timestamp. `filehash` is unique and supports duplicate detection.
 - `merchant_category_rules`: exact merchant names and learned categories, matched case-insensitively and created idempotently for existing databases.
+- `categories`: case-insensitive unique category definitions. Existing built-in, custom JSON, transaction, and learned-rule categories are seeded when the database opens; new definitions are persisted here.
 
 The default database path is `data/finance.db`. Transaction sorting uses an allowlist of supported sort columns and validated direction values. Search binds its term as a parameter and applies case-insensitive `LIKE` matching to merchant and category; wildcard characters in the input are escaped so a typed percent or underscore is treated literally. Payment method and transaction type are not currently database columns.
 
 `config/settings.json` stores application settings such as the selected finance folder. `data/categories.json` retains legacy merchant/category rules, and `data/custom_categories.json` stores custom category names. New learned rules are stored in SQLite; the existing “all future transactions” category action writes to both stores for compatibility.
+
+The unknown-transaction review dialog loads rows with missing, blank, or “Unbekannt” categories from SQLite. Individual choices and multi-row assignments remain in the dialog until saved. The database service commits category assignments and approved merchant rules together; choosing “Später bearbeiten” or “Abbrechen” leaves transaction and rule data unchanged. When a rule is explicitly saved or replaced, matching transactions that are still uncategorized are updated in the same SQLite transaction. Merchant matching is case-insensitive and trims surrounding whitespace, but remains exact; existing categorized transactions are preserved. A conflicting existing rule requires explicit replacement confirmation, while conflicting remembered choices for one merchant must be resolved before saving.
 
 ### Reporting: `app/reports/`
 
@@ -100,6 +103,7 @@ The package is currently an extension point; report generation is not implemente
 4. `DatabaseService` stores supported transaction columns and source metadata in SQLite.
 5. Successful file metadata and its content hash are recorded in `imported_files`.
 6. The UI reloads rows using the current SQL sort and search state.
+7. If uncategorized transactions remain, the UI opens the batch review dialog. Users may save categories and approved merchant rules or defer review; the main-window review button remains available afterward. Saving a remembered rule also applies it to matching uncategorized stored transactions; the UI reloads the table and unknown count after the dialog closes.
 
 ### Folder Synchronization
 
